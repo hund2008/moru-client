@@ -1,12 +1,15 @@
-import { contextBridge } from 'electron'
+
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// Custom APIs for renderer
-const api = {}
+// MORU 전용 API
+const api = {
+  // Modrinth 모드 검색
+  searchMods: (keyword: string) =>
+    ipcRenderer.invoke('modrinth:search', keyword)
+}
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
+// React와 Electron 연결
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
@@ -15,8 +18,9 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
+  // @ts-ignore
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
+
+  // @ts-ignore
   window.api = api
 }
