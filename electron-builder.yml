@@ -1,7 +1,9 @@
 appId: com.electron.app
 productName: moru-client
+
 directories:
   buildResources: build
+
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -9,15 +11,20 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+
 asarUnpack:
   - resources/**
+
 win:
   executableName: moru-client
+
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  deleteAppDataOnUninstall: true
+
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -26,8 +33,10 @@ mac:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
+
 dmg:
   artifactName: ${name}-${version}.${ext}
+
 linux:
   target:
     - AppImage
@@ -35,9 +44,12 @@ linux:
     - deb
   maintainer: electronjs.org
   category: Utility
+
 appImage:
   artifactName: ${name}-${version}.${ext}
+
 npmRebuild: false
+
 publish:
   provider: generic
   url: https://example.com/auto-updates
