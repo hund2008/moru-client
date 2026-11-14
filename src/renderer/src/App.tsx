@@ -1,43 +1,40 @@
+import { useEffect, useRef, useState } from 'react'
 import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type KeyboardEvent
-} from 'react'
-import { createPortal } from 'react-dom'
-import {
-  localizedModDescription,
-  translate,
-  type Language,
-  type TranslationKey
-} from './locales'
+  MoruSelect,
+  useLauncherPreferences
+} from './LauncherSupport'
+import SettingsDialog from './components/SettingsDialog'
+import ProfileSettingsDialog from './components/ProfileSettingsDialog'
+import type {
+  ProfileSettingsResult
+} from '../../shared/profile-settings'
+import ContentBrowser from './components/ContentBrowser'
+import GameLaunchPanel, {
+  useGameLauncher
+} from './components/GameLaunchPanel'
+import CreateProfileDialog, {
+  type ProfileDraft
+} from './components/CreateProfileDialog'
+import './assets/moru-shell.css'
 
-type Page =
-  | 'home'
-  | 'profiles'
-  | 'discover'
-  | 'installed'
-  | 'settings'
+type Page = 'home' | 'profiles' | 'content' | 'mods'
 
-type ModLoader = 'vanilla' | 'fabric'
-
-type GameProfile = {
+type Profile = {
   id: string
   name: string
   version: string
-  loader: ModLoader
+  loader: 'vanilla' | 'fabric' | 'forge' | 'neoforge'
+  loaderVersion?: string | null
+  icon?: string | null
 }
 
-type ReleaseCatalog = {
+type Catalog = {
   releases: string[]
   fabric: string[]
   fabricAvailable: boolean
 }
 
-type MoruMod = {
+type Mod = {
   id: string
   name: string
   description: string
@@ -45,1363 +42,424 @@ type MoruMod = {
   downloads: number
 }
 
-type InstalledMod = {
+type Installed = {
   projectId: string
   versionId: string
   filename: string
 }
 
-type ListMode = 'recommended' | 'search'
-
-const DEFAULT_PROFILE: GameProfile = {
+const DEFAULT: Profile = {
   id: 'moru-default',
   name: 'MORU',
   version: '26.1.2',
   loader: 'fabric'
 }
 
-const PROFILES_STORAGE = 'moru-game-profiles-v1'
-const ACTIVE_PROFILE_STORAGE = 'moru-active-profile-v1'
+const PROFILE_KEY = 'moru-game-profiles-v1'
+const ACTIVE_KEY = 'moru-active-profile-v1'
 
-function readProfiles(): GameProfile[] {
+function readProfiles(): Profile[] {
   try {
-    const raw = localStorage.getItem(PROFILES_STORAGE)
-
-    if (!raw) return [DEFAULT_PROFILE]
-
-    const parsed: unknown = JSON.parse(raw)
-
-    if (!Array.isArray(parsed)) return [DEFAULT_PROFILE]
-
-    const profiles: GameProfile[] = parsed
-      .filter((item): item is GameProfile => {
-        if (!item || typeof item !== 'object') return false
-
-        const value = item as Partial<GameProfile>
-
-        return (
-          typeof value.id === 'string' &&
-          typeof value.name === 'string' &&
-          typeof value.version === 'string' &&
-          (
-            value.loader === 'vanilla' ||
-            value.loader === 'fabric'
-          )
-        )
-      })
-      .slice(0, 40)
-
-    return profiles.length ? profiles : [DEFAULT_PROFILE]
-  } catch {
-    return [DEFAULT_PROFILE]
-  }
-}
-
-const styles = `
-  * { box-sizing: border-box; }
-  html, body, #root { width: 100%; height: 100%; margin: 0 !important; padding: 0 !important; max-width: none !important; }
-  body { display: block !important; overflow: hidden; background: #0c1113; color: #edf5f1; font-family: var(--moru-selected-font, 'Segoe UI', 'Malgun Gothic', sans-serif); }
-  button, input, select { font: inherit; }
-  button { cursor: pointer; }
-  .moru { display: flex; width: 100%; height: 100vh; text-align: left; background: #0c1113; }
-  .sidebar { display: flex; flex-direction: column; flex-shrink: 0; width: 225px; padding: 28px 15px; border-right: 1px solid #27312e; background: #101719; }
-  .brand { display: flex; align-items: center; gap: 12px; padding: 0 13px 42px; font-size: 23px; font-weight: 800; letter-spacing: 2px; }
-  .brand-icon { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 11px; background: #43d9a0; color: #0d1b17; font-size: 25px; }
-  .nav-label { margin: 0 13px 15px; color: #718b81; font-size: 11px; letter-spacing: 2px; }
-  .nav-button { width: 100%; padding: 14px; margin-bottom: 5px; border: none; border-radius: 10px; background: transparent; color: #91a49d; text-align: left; font-size: 14px; }
-  .nav-button:hover { background: #1c2927; }
-  .nav-button.active { background: #1b3c32; color: #55e7ae; font-weight: 700; }
-  .nav-symbol { display: inline-block; width: 30px; font-size: 18px; }
-  .sidebar-bottom { margin-top: auto; padding: 13px; color: #7f998f; font-size: 12px; border-top: 1px solid #27312e; }
-  .content { flex: 1; min-width: 0; overflow: auto; padding: 32px 42px; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 35px; }
-  .topbar h2 { margin: 0; font-size: 20px; }
-  .microsoft-account { display: flex; align-items: center; gap: 10px; padding: 9px 13px; flex-shrink: 0; border: 1px solid #30483f; border-radius: 11px; background: #172420; color: #c7ddd2; font-size: 13px; font-weight: 600; }
-  .microsoft-account:disabled { opacity: 1; cursor: default; }
-  .microsoft-mark { display: grid; grid-template-columns: repeat(2, 7px); grid-template-rows: repeat(2, 7px); gap: 2px; width: 16px; height: 16px; flex-shrink: 0; }
-  .microsoft-mark span:nth-child(1) { background: #f35325; }
-  .microsoft-mark span:nth-child(2) { background: #81bc06; }
-  .microsoft-mark span:nth-child(3) { background: #05a6f0; }
-  .microsoft-mark span:nth-child(4) { background: #ffba08; }
-  .home-profile-picker { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; max-width: 360px; margin-top: 25px; }
-  .home-profile-picker label { font-size: 12px; font-weight: 700; color: #b7e0ce; }
-  .moru-select-root { width: 100%; min-width: 0; }
-  .moru-select-trigger { width: 100%; min-width: 0; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 15px; color: #eaf9f1; background: #132521; border: 1px solid #365548; border-radius: 12px; text-align: left; cursor: pointer; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
-  .moru-select-trigger:hover { background: #1c332a; border-color: #579477; }
-  .moru-select-trigger.is-open { background: #1a382d; border-color: #55d5a0; box-shadow: 0 0 0 3px rgba(67, 217, 160, .12); }
-  .moru-select-trigger:focus-visible { outline: 2px solid #57e6ab; outline-offset: 2px; }
-  .moru-select-trigger:disabled { opacity: .5; cursor: default; }
-  .moru-select-hero { background: rgba(9, 29, 23, .78); border-color: rgba(108, 204, 158, .42); backdrop-filter: blur(8px); }
-  .moru-select-value { display: flex; align-items: center; gap: 11px; min-width: 0; }
-  .moru-select-dot { width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: #4be2a3; box-shadow: 0 0 0 4px rgba(73, 226, 163, .12); }
-  .moru-select-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
-  .moru-select-arrow { width: 8px; height: 8px; flex-shrink: 0; margin-right: 4px; border-right: 2px solid #93c6ab; border-bottom: 2px solid #93c6ab; transform: translateY(-2px) rotate(45deg); transition: transform .18s ease; }
-  .moru-select-trigger.is-open .moru-select-arrow { transform: translateY(2px) rotate(225deg); }
-  .moru-select-menu { z-index: 9999; padding: 6px; overflow-y: auto; overscroll-behavior: contain; background: #152720; color: #eaf9f1; border: 1px solid #456957; border-radius: 14px; box-shadow: 0 18px 42px rgba(0, 0, 0, .42), 0 5px 16px rgba(0, 0, 0, .2); scrollbar-color: #3d6a55 #152720; scrollbar-width: thin; animation: moru-select-appear .16s ease-out both; }
-  .moru-select-menu.opens-above { transform-origin: bottom center; }
-  .moru-select-option { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 40px; padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; color: #c6e2d2; cursor: pointer; transition: background .14s ease, color .14s ease; }
-  .moru-select-option:hover, .moru-select-option.is-highlighted { background: #234838; color: #f3fff8; }
-  .moru-select-option.is-selected { color: #65efb4; background: #1c3d30; }
-  .moru-select-option:disabled { opacity: .38; cursor: default; }
-  .moru-select-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-  .moru-select-check { font-size: 15px; color: #68f0b9; margin-left: 12px; }
-  @keyframes moru-select-appear {
-    from { opacity: 0; transform: translateY(-5px) scale(.99); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .moru-select-trigger, .moru-select-arrow, .moru-select-option { transition: none; }
-    .moru-select-menu { animation: none; }
-  }
-  .hero { position: relative; overflow: hidden; min-height: 290px; padding: 39px; border: 1px solid #345749; border-radius: 20px; background: radial-gradient(circle at 90% 25%, #245c46, transparent 45%), linear-gradient(125deg, #152d26, #111b1b); }
-  .hero::after { content: '◆'; position: absolute; right: 8%; top: 0; font-size: 260px; line-height: 1; color: #46df9b; opacity: .10; transform: rotate(-15deg); pointer-events: none; }
-  .eyebrow { color: #63daa5; font-size: 11px; font-weight: 700; letter-spacing: 2.5px; }
-  .hero h1 { margin: 19px 0 9px; font-size: clamp(30px, 4vw, 43px); }
-  .muted { color: #98aea4; font-size: 14px; line-height: 1.7; }
-  .play { position: relative; z-index: 1; margin-top: 16px; padding: 13px 38px; border: none; border-radius: 10px; background: #40d99b; color: #0b221a; font-weight: 800; }
-  .play:disabled { cursor: default; opacity: .7; }
-  .section-title { margin: 35px 0 17px; font-size: 18px; }
-  .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
-  .card, .panel { border: 1px solid #25352e; border-radius: 15px; background: #161f20; }
-  .card { padding: 21px; }
-  .panel { padding: 28px; }
-  .card-label { color: #8fa49a; font-size: 12px; }
-  .card-value { margin-top: 13px; font-size: 20px; font-weight: 750; }
-  .search-row { display: flex; gap: 10px; margin: 22px 0; }
-  .search { flex: 1; min-width: 0; padding: 14px 18px; border: 1px solid #355144; outline: none; border-radius: 10px; color: #edf5f1; background: #0e1718; }
-  .search:focus { border-color: #43d9a0; }
-  .action-button { padding: 12px 22px; border: none; border-radius: 10px; background: #40d99b; color: #0b221a; font-weight: 750; }
-  .action-button:disabled { opacity: .5; cursor: default; }
-  .list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0 16px; }
-  .list-heading h3 { margin: 0; font-size: 17px; }
-  .list-heading span { color: #8fa49a; font-size: 12px; }
-  .mod-list { display: flex; flex-direction: column; gap: 11px; }
-  .mod-card { display: flex; align-items: center; width: 100%; gap: 16px; padding: 16px; border: 1px solid #2b3b34; border-radius: 12px; background: #192522; color: #edf5f1; text-align: left; }
-  .mod-card:hover, .mod-card.selected { border-color: #4ad5a0; }
-  .mod-icon { position: relative; display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border-radius: 11px; overflow: hidden; background: #294c3d; color: #60e6ad; font-size: 22px; font-weight: 800; }
-  .mod-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .mod-info { flex: 1; min-width: 0; }
-  .mod-name { font-size: 15px; font-weight: 700; }
-  .mod-desc { margin-top: 5px; color: #9bb0a6; font-size: 12px; line-height: 1.5; }
-  .downloads { color: #61dba9; font-size: 12px; white-space: nowrap; }
-  .empty { padding: 55px 20px; text-align: center; color: #9ab2a6; }
-  .secondary-button { padding: 11px 18px; border: 1px solid #45715b; border-radius: 9px; background: #203b30; color: #83e8b9; font-weight: 650; }
-  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; border-bottom: 1px solid #293c32; }
-  .ram-slider { width: 190px; accent-color: #46df9f; }
-  .font-control { min-width: 205px; max-width: 255px; text-align: right; }
-  .font-name { font-size: 12px; color: #b4d1c3; margin-bottom: 10px; overflow-wrap: anywhere; }
-  .font-actions { display: flex; gap: 7px; justify-content: flex-end; flex-wrap: wrap; }
-  .font-button { padding: 9px 13px; border: 1px solid #45715b; border-radius: 9px; background: #203b30; color: #83e8b9; font-size: 12px; }
-  .font-button:disabled { opacity: 0.45; cursor: default; }
-  .font-error { color: #ffaaaa; font-size: 12px; margin-top: 8px; }
-  .profile-list { display: grid; gap: 12px; margin: 18px 0 28px; }
-  .profile-card { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 19px; background: #192522; border: 1px solid #2b3b34; border-radius: 12px; }
-  .profile-card.is-active { border-color: #4ad5a0; }
-  .profile-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
-  .profile-select { padding: 10px 13px; border: 1px solid #45715b; border-radius: 9px; background: #203b30; color: #edf5f1; max-width: 100%; }
-  .profile-select:disabled, .secondary-button:disabled { opacity: .5; cursor: default; }
-  .new-profile { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-  .profile-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-  .profile-field label { color: #9bb0a6; font-size: 13px; }
-  .profile-field input, .profile-field select { width: 100%; padding: 12px; color: #edf5f1; background: #0e1718; border: 1px solid #355144; border-radius: 9px; }
-  .profile-field input:focus, .profile-field select:focus { outline: 1px solid #43d9a0; }
-  .inline-note { margin: 10px 0; color: #98aea4; font-size: 12px; line-height: 1.6; }
-  .error { padding: 15px; border-radius: 10px; background: #422423; color: #ffaaaa; font-size: 13px; }
-  .install-dialog { width: min(520px, 90vw); max-height: 80vh; overflow-y: auto; padding: 24px; color: #edf5f1; background: #152720; border: 1px solid #456957; border-radius: 16px; font: inherit; }
-  .install-dialog::backdrop { background: #0009; }
-  .install-profile-list { display: grid; gap: 10px; margin: 20px 0; }
-  .install-profile-list button { text-align: left; line-height: 1.7; }
-  @media (max-width: 900px) {
-    .new-profile { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 800px) {
-    .sidebar { width: 175px; }
-    .content { padding: 24px; }
-    .cards { grid-template-columns: 1fr; }
-    .hero { padding: 27px; }
-    .mod-card { flex-wrap: wrap; }
-    .microsoft-account { padding: 8px; }
-  }
-`
-
-const FONT_DATABASE = 'moru-font-db'
-const FONT_STORE = 'settings'
-const FONT_KEY = 'selected-font'
-const MAX_FONT_BYTES = 25 * 1024 * 1024
-
-type SavedFont = {
-  name: string
-  file: Blob
-}
-
-function openFontDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(FONT_DATABASE, 1)
-
-    request.onupgradeneeded = () => {
-      const database = request.result
-
-      if (!database.objectStoreNames.contains(FONT_STORE)) {
-        database.createObjectStore(FONT_STORE)
-      }
-    }
-
-    request.onsuccess = () => resolve(request.result)
-
-    request.onerror = () =>
-      reject(
-        request.error ??
-        new Error('IndexedDB open failed')
-      )
-
-    request.onblocked = () =>
-      reject(new Error('IndexedDB is blocked'))
-  })
-}
-
-async function readSavedFont(): Promise<SavedFont | null> {
-  const database = await openFontDatabase()
-
-  try {
-    return await new Promise((resolve, reject) => {
-      const transaction = database.transaction(
-        FONT_STORE,
-        'readonly'
-      )
-
-      const request = transaction
-        .objectStore(FONT_STORE)
-        .get(FONT_KEY)
-
-      request.onsuccess = () =>
-        resolve(
-          (request.result as SavedFont | undefined) ?? null
-        )
-
-      request.onerror = () =>
-        reject(
-          request.error ??
-          new Error('Font read failed')
-        )
-
-      transaction.onabort = () =>
-        reject(
-          transaction.error ??
-          new Error('Font read aborted')
-        )
-    })
-  } finally {
-    database.close()
-  }
-}
-
-async function saveSelectedFont(
-  value: SavedFont
-): Promise<void> {
-  const database = await openFontDatabase()
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(
-        FONT_STORE,
-        'readwrite'
-      )
-
-      transaction
-        .objectStore(FONT_STORE)
-        .put(value, FONT_KEY)
-
-      transaction.oncomplete = () => resolve()
-
-      transaction.onerror = () =>
-        reject(
-          transaction.error ??
-          new Error('Font save failed')
-        )
-
-      transaction.onabort = () =>
-        reject(
-          transaction.error ??
-          new Error('Font save aborted')
-        )
-    })
-  } finally {
-    database.close()
-  }
-}
-
-async function clearSelectedFont(): Promise<void> {
-  const database = await openFontDatabase()
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(
-        FONT_STORE,
-        'readwrite'
-      )
-
-      transaction
-        .objectStore(FONT_STORE)
-        .delete(FONT_KEY)
-
-      transaction.oncomplete = () => resolve()
-
-      transaction.onerror = () =>
-        reject(
-          transaction.error ??
-          new Error('Font remove failed')
-        )
-
-      transaction.onabort = () =>
-        reject(
-          transaction.error ??
-          new Error('Font remove aborted')
-        )
-    })
-  } finally {
-    database.close()
-  }
-}
-
-function isTrueTypeFont(buffer: ArrayBuffer): boolean {
-  if (buffer.byteLength < 12) return false
-
-  const signature = new Uint8Array(buffer, 0, 4)
-
-  return (
-    (
-      signature[0] === 0 &&
-      signature[1] === 1 &&
-      signature[2] === 0 &&
-      signature[3] === 0
-    ) ||
-    (
-      signature[0] === 0x74 &&
-      signature[1] === 0x72 &&
-      signature[2] === 0x75 &&
-      signature[3] === 0x65
-    )
-  )
-}
-
-async function prepareFont(file: Blob): Promise<FontFace> {
-  const buffer = await file.arrayBuffer()
-
-  if (!isTrueTypeFont(buffer)) {
-    throw new Error('font-format')
-  }
-
-  const face = new FontFace('MORU User Font', buffer)
-
-  return face.load()
-}
-
-type MoruOption = {
-  value: string
-  label: string
-  disabled?: boolean
-}
-
-type MoruSelectProps = {
-  id: string
-  value: string
-  options: MoruOption[]
-  onChange: (value: string) => void
-  ariaLabel: string
-  disabled?: boolean
-  variant?: 'hero' | 'default'
-}
-
-type MenuPosition = {
-  top: number
-  left: number
-  width: number
-  maxHeight: number
-  above: boolean
-}
-
-function MoruSelect({
-  id,
-  value,
-  options,
-  onChange,
-  ariaLabel,
-  disabled = false,
-  variant = 'default'
-}: MoruSelectProps) {
-  const [open, setOpen] = useState(false)
-  const [highlighted, setHighlighted] = useState(0)
-  const [position, setPosition] =
-    useState<MenuPosition | null>(null)
-
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  const chosen = options.find(
-    option => option.value === value
-  )
-
-  const updatePosition = useCallback(() => {
-    const target = triggerRef.current
-
-    if (!target) return
-
-    const rect = target.getBoundingClientRect()
-
-    const visibleHeight = Math.min(
-      284,
-      options.length * 46 + 12
+    const value: unknown = JSON.parse(
+      localStorage.getItem(PROFILE_KEY) || '[]'
     )
 
-    const below =
-      window.innerHeight - rect.bottom - 12
+    if (!Array.isArray(value)) return [DEFAULT]
 
-    const above = rect.top - 12
+    const seen = new Set<string>()
 
-    const showAbove =
-      below < visibleHeight && above > below
-
-    const maxHeight = Math.max(
-      60,
-      Math.min(
-        284,
-        (showAbove ? above : below) - 8
-      )
-    )
-
-    const top = showAbove
-      ? Math.max(8, rect.top - maxHeight - 7)
-      : rect.bottom + 7
-
-    const width = Math.min(
-      rect.width,
-      window.innerWidth - 16
-    )
-
-    const left = Math.max(
-      8,
-      Math.min(
-        rect.left,
-        window.innerWidth - width - 8
-      )
-    )
-
-    setPosition({
-      top,
-      left,
-      width,
-      maxHeight,
-      above: showAbove
-    })
-  }, [options.length])
-
-  useLayoutEffect(() => {
-    if (!open) return
-
-    updatePosition()
-
-    const reposition = () => updatePosition()
-
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
-
-    return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener(
-        'scroll',
-        reposition,
-        true
-      )
-    }
-  }, [open, updatePosition])
-
-  useEffect(() => {
-    if (!open) return
-
-    const outside = (event: PointerEvent) => {
-      const node = event.target as Node
-
+    const valid = value.filter((item): item is Profile => {
       if (
-        !triggerRef.current?.contains(node) &&
-        !menuRef.current?.contains(node)
+        !item ||
+        typeof item.id !== 'string' ||
+        typeof item.name !== 'string' ||
+        typeof item.version !== 'string' ||
+        !['vanilla', 'fabric', 'forge', 'neoforge'].includes(
+          item.loader
+        ) ||
+        seen.has(item.id)
       ) {
-        setOpen(false)
+        return false
       }
-    }
 
-    document.addEventListener('pointerdown', outside)
+      seen.add(item.id)
+      return true
+    })
 
-    return () =>
-      document.removeEventListener(
-        'pointerdown',
-        outside
-      )
-  }, [open])
-
-  useEffect(() => {
-    if (disabled) setOpen(false)
-  }, [disabled])
-
-  function openMenu() {
-    if (disabled) return
-
-    const selectedIndex = options.findIndex(
-      option =>
-        option.value === value &&
-        !option.disabled
-    )
-
-    setHighlighted(
-      selectedIndex >= 0
-        ? selectedIndex
-        : Math.max(
-            0,
-            options.findIndex(option => !option.disabled)
-          )
-    )
-
-    setPosition(null)
-    setOpen(true)
+    return valid.length ? valid : [DEFAULT]
+  } catch {
+    return [DEFAULT]
   }
-
-  function selectOption(option: MoruOption) {
-    if (option.disabled) return
-
-    onChange(option.value)
-    setOpen(false)
-    triggerRef.current?.focus()
-  }
-
-  function handleKeyDown(
-    event: KeyboardEvent<HTMLButtonElement>
-  ) {
-    if (event.key === 'Escape') {
-      if (open) event.preventDefault()
-      setOpen(false)
-      return
-    }
-
-    if (
-      event.key === 'ArrowDown' ||
-      event.key === 'ArrowUp'
-    ) {
-      event.preventDefault()
-
-      if (!open) {
-        openMenu()
-        return
-      }
-
-      if (!options.some(option => !option.disabled)) {
-        return
-      }
-
-      const direction =
-        event.key === 'ArrowDown' ? 1 : -1
-
-      let next = highlighted
-
-      for (let i = 0; i < options.length; i++) {
-        next =
-          (next + direction + options.length) %
-          options.length
-
-        if (!options[next].disabled) {
-          setHighlighted(next)
-          break
-        }
-      }
-
-      return
-    }
-
-    if (
-      (event.key === 'Enter' || event.key === ' ') &&
-      open
-    ) {
-      event.preventDefault()
-
-      const option = options[highlighted]
-
-      if (option) selectOption(option)
-    }
-  }
-
-  return (
-    <div className="moru-select-root">
-      <button
-        id={id}
-        ref={triggerRef}
-        type="button"
-        className={[
-          'moru-select-trigger',
-          variant === 'hero' ? 'moru-select-hero' : '',
-          open ? 'is-open' : ''
-        ].join(' ')}
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={
-          open ? `${id}-options` : undefined
-        }
-        aria-activedescendant={
-          open
-            ? `${id}-option-${highlighted}`
-            : undefined
-        }
-        disabled={disabled || options.length === 0}
-        onClick={() =>
-          open ? setOpen(false) : openMenu()
-        }
-        onKeyDown={handleKeyDown}
-      >
-        <span className="moru-select-value">
-          {variant === 'hero' && (
-            <span
-              className="moru-select-dot"
-              aria-hidden="true"
-            />
-          )}
-          <span className="moru-select-text">
-            {chosen?.label ?? '—'}
-          </span>
-        </span>
-        <span
-          className="moru-select-arrow"
-          aria-hidden="true"
-        />
-      </button>
-
-      {open &&
-        position &&
-        createPortal(
-          <div
-            id={`${id}-options`}
-            ref={menuRef}
-            role="listbox"
-            aria-label={ariaLabel}
-            className={`moru-select-menu ${
-              position.above ? 'opens-above' : ''
-            }`}
-            style={{
-              position: 'fixed',
-              top: position.top,
-              left: position.left,
-              width: position.width,
-              maxHeight: position.maxHeight
-            }}
-          >
-            {options.map((option, index) => (
-              <button
-                id={`${id}-option-${index}`}
-                type="button"
-                role="option"
-                key={option.value}
-                tabIndex={-1}
-                disabled={option.disabled}
-                aria-selected={option.value === value}
-                className={[
-                  'moru-select-option',
-                  option.value === value
-                    ? 'is-selected'
-                    : '',
-                  index === highlighted
-                    ? 'is-highlighted'
-                    : ''
-                ].join(' ')}
-                onMouseEnter={() =>
-                  setHighlighted(index)
-                }
-                onClick={() => selectOption(option)}
-              >
-                <span className="moru-select-option-label">
-                  {option.label}
-                </span>
-                {option.value === value && (
-                  <span
-                    className="moru-select-check"
-                    aria-hidden="true"
-                  >
-                    ✓
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>,
-          document.body
-        )}
-    </div>
-  )
 }
 
-function App() {
-  const [language, setLanguage] = useState<Language>(
-    () => {
-      try {
-        return localStorage.getItem('moru-language') === 'en'
-          ? 'en'
-          : 'ko'
-      } catch {
-        return 'ko'
-      }
-    }
-  )
-
-  const t = (key: TranslationKey) =>
-    translate(language, key)
-
-  useEffect(() => {
-    document.documentElement.lang = language
-
-    try {
-      localStorage.setItem('moru-language', language)
-    } catch {
-      // 保存できない環境ではメモリ上で保持
-    }
-  }, [language])
+export default function App() {
+  const preferences = useLauncherPreferences()
+  const launcher = useGameLauncher()
+  const { language, t } = preferences
+  const ko = language === 'ko'
 
   const [page, setPage] = useState<Page>('home')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [profileSettingsOpen, setProfileSettingsOpen] =
+    useState(false)
   const [profiles, setProfiles] =
-    useState<GameProfile[]>(readProfiles)
+    useState<Profile[]>(readProfiles)
 
   const [activeId, setActiveId] = useState(() => {
     try {
-      return (
-        localStorage.getItem(ACTIVE_PROFILE_STORAGE) ||
-        DEFAULT_PROFILE.id
-      )
+      return localStorage.getItem(ACTIVE_KEY) || DEFAULT.id
     } catch {
-      return DEFAULT_PROFILE.id
+      return DEFAULT.id
     }
   })
 
-  const activeProfile =
-    profiles.find(profile => profile.id === activeId) ??
+  const active =
+    profiles.find(item => item.id === activeId) ??
     profiles[0]
 
-  const [catalog, setCatalog] =
-    useState<ReleaseCatalog | null>(null)
-
-  const [catalogLoading, setCatalogLoading] =
-    useState(true)
-
-  const [catalogError, setCatalogError] =
-    useState(false)
-
-  const [newName, setNewName] = useState('')
-  const [newVersion, setNewVersion] =
-    useState('26.1.2')
-
-  const [newLoader, setNewLoader] =
-    useState<ModLoader>('vanilla')
+  const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [catalogFailed, setCatalogFailed] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [profileQuery, setProfileQuery] = useState('')
+  const [installed, setInstalled] = useState<Installed[]>([])
+  const [installedFailed, setInstalledFailed] = useState(false)
+  const [refresh, setRefresh] = useState(0)
+  const [installing, setInstalling] = useState(false)
+  const [message, setMessage] = useState('')
+  const [failed, setFailed] = useState(false)
+  const installLock = useRef(false)
 
   useEffect(() => {
     try {
       localStorage.setItem(
-        PROFILES_STORAGE,
+        PROFILE_KEY,
         JSON.stringify(profiles)
       )
-
-      localStorage.setItem(
-        ACTIVE_PROFILE_STORAGE,
-        activeProfile.id
-      )
+      localStorage.setItem(ACTIVE_KEY, active.id)
     } catch {
-      // 저장할 수 없으면 현재 실행에서만 유지
+      // 현재 실행에서만 유지합니다.
     }
-  }, [profiles, activeProfile.id])
+  }, [profiles, active.id])
 
   useEffect(() => {
     let cancelled = false
 
-    void (async () => {
-      try {
-        const result =
-          await window.api.getReleaseVersions()
-
-        if (cancelled) return
-
-        setCatalog(result)
-        setCatalogError(false)
-
-        setNewVersion(previous =>
-          result.releases.includes(previous)
-            ? previous
-            : (result.releases[0] ?? '26.1.2')
-        )
-      } catch {
-        if (!cancelled) setCatalogError(true)
-      } finally {
-        if (!cancelled) setCatalogLoading(false)
-      }
-    })()
+    void window.api.getReleaseVersions()
+      .then(value => {
+        if (!cancelled) setCatalog(value)
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogFailed(true)
+      })
 
     return () => {
       cancelled = true
     }
   }, [])
 
-  function createProfile() {
-    const name = newName.trim().slice(0, 40)
-
-    if (
-      !name ||
-      !catalog?.releases.includes(newVersion) ||
-      profiles.length >= 40
-    ) {
-      return
-    }
-
-    if (
-      newLoader === 'fabric' &&
-      !catalog.fabric.includes(newVersion)
-    ) {
-      return
-    }
-
-    const id =
-      `profile-${Date.now()}-` +
-      Math.random().toString(36).slice(2, 9)
-
-    const next: GameProfile = {
-      id,
-      name,
-      version: newVersion,
-      loader: newLoader
-    }
-
-    setProfiles(current => [...current, next])
-    setActiveId(id)
-    setNewName('')
-  }
-
-  function removeProfile(id: string) {
-    if (profiles.length <= 1) return
-
-    const remaining = profiles.filter(
-      profile => profile.id !== id
-    )
-
-    setProfiles(remaining)
-
-    if (activeProfile.id === id) {
-      setActiveId(remaining[0].id)
-    }
-  }
-
-  const [search, setSearch] = useState('')
-  const [mods, setMods] = useState<MoruMod[]>([])
-  const [loading, setLoading] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [searchError, setSearchError] = useState('')
-
-  const [downloadTarget, setDownloadTarget] =
-    useState<MoruMod | null>(null)
-
-  const [downloading, setDownloading] = useState(false)
-  const [downloadMessage, setDownloadMessage] =
-    useState('')
-
-  const [downloadFailed, setDownloadFailed] =
-    useState(false)
-
-  const [installedFiles, setInstalledFiles] =
-    useState<InstalledMod[]>([])
-
-  const [installedError, setInstalledError] =
-    useState(false)
-
-  const [installedRefresh, setInstalledRefresh] =
-    useState(0)
-
-  const installDialog =
-    useRef<HTMLDialogElement>(null)
-
-  const downloadLock = useRef(false)
-
-  useEffect(() => {
-    if (
-      downloadTarget &&
-      !installDialog.current?.open
-    ) {
-      installDialog.current?.showModal()
-    }
-
-    if (!downloadTarget) {
-      installDialog.current?.close()
-    }
-  }, [downloadTarget])
-
   useEffect(() => {
     let cancelled = false
 
-    setInstalledFiles([])
-    setInstalledError(false)
+    setInstalled([])
+    setInstalledFailed(false)
 
-    void window.api
-      .listInstalled(activeProfile)
-      .then(files => {
-        if (!cancelled) setInstalledFiles(files)
+    void window.api.listInstalled(active)
+      .then(value => {
+        if (!cancelled) setInstalled(value)
       })
       .catch(() => {
-        if (!cancelled) setInstalledError(true)
+        if (!cancelled) setInstalledFailed(true)
       })
 
     return () => {
       cancelled = true
     }
-  }, [activeProfile.id, page, installedRefresh])
+  }, [active.id, page, refresh])
 
-  async function downloadMod(
-    mod: MoruMod,
-    profile: GameProfile
-  ) {
-    if (downloadLock.current) return
+  function createProfile(draft: ProfileDraft): string | null {
+    if (profiles.length >= 40) {
+      return ko
+        ? '프로필은 최대 40개까지 만들 수 있습니다.'
+        : 'You can create up to 40 profiles.'
+    }
 
-    setDownloadTarget(null)
-
-    if (profile.loader !== 'fabric') {
-      setDownloadFailed(true)
-      setDownloadMessage(
-        language === 'ko'
-          ? 'Fabric 프로필을 선택해 주세요.'
-          : 'Select a Fabric profile.'
+    if (
+      !draft.name.trim() ||
+      !catalog?.releases.includes(draft.version) ||
+      (
+        draft.loader !== 'vanilla' &&
+        !draft.loaderVersion
       )
+    ) {
+      return ko
+        ? '프로필 설정을 확인해 주세요.'
+        : 'Check profile settings.'
+    }
+
+    const item: Profile = {
+      ...draft,
+      id:
+        `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    }
+
+    const next = [...profiles, item]
+
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
+    } catch {
+      return ko
+        ? '프로필을 저장하지 못했습니다. 저장 공간을 확인해 주세요.'
+        : 'Could not save the profile. Check storage.'
+    }
+
+    setProfiles(next)
+    setActiveId(item.id)
+
+    return null
+  }
+
+  function openProfile(profile: Profile) {
+    setActiveId(profile.id)
+    setPage('mods')
+    setMessage('')
+  }
+
+  async function removeProfile(
+    confirmation: string
+  ): Promise<string | null> {
+    if (
+      active.id === DEFAULT.id ||
+      profiles.length <= 1 ||
+      installLock.current ||
+      launcher.busy ||
+      confirmation !== active.name
+    ) {
+      return ko
+        ? '현재 이 프로필을 삭제할 수 없습니다.'
+        : 'This profile cannot be deleted right now.'
+    }
+
+    const previous = profiles
+    const next = profiles.filter(
+      item => item.id !== active.id
+    )
+
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
+    } catch {
+      return ko
+        ? '프로필 목록을 저장할 수 없어 삭제를 중단했습니다.'
+        : 'Could not save the profile list. Deletion cancelled.'
+    }
+
+    try {
+      const result =
+        await window.electron.ipcRenderer.invoke(
+          'profile-settings:delete',
+          active.id,
+          active.name,
+          confirmation
+        ) as ProfileSettingsResult
+
+      if (!result.ok) throw Error(result.code)
+    } catch (error) {
+      try {
+        localStorage.setItem(
+          PROFILE_KEY,
+          JSON.stringify(previous)
+        )
+      } catch {
+        // 메모리에 있는 프로필 목록은 유지합니다.
+      }
+
+      return error instanceof Error &&
+        error.message === 'BUSY'
+        ? ko
+          ? '게임 실행과 다운로드가 끝난 뒤 삭제해 주세요.'
+          : 'Finish the game and downloads first.'
+        : ko
+          ? '프로필 폴더를 휴지통으로 옮기지 못했습니다. 삭제하지 않았습니다.'
+          : 'Could not move the profile folder to the recycle bin.'
+    }
+
+    setProfiles(next)
+    setActiveId(next[0].id)
+    setProfileSettingsOpen(false)
+    setPage('profiles')
+    setFailed(false)
+
+    setMessage(
+      ko
+        ? '프로필을 삭제하고 폴더를 휴지통으로 이동했습니다.'
+        : 'Profile removed. Its folder was moved to the recycle bin.'
+    )
+
+    return null
+  }
+
+  async function install(mod: Mod) {
+    if (
+      installLock.current ||
+      active.loader !== 'fabric'
+    ) {
       return
     }
 
-    downloadLock.current = true
-    setDownloading(true)
-    setDownloadFailed(false)
+    const destination = active
 
-    setDownloadMessage(
-      language === 'ko'
-        ? `${profile.name}에 다운로드 중…`
-        : `Downloading to ${profile.name}…`
+    installLock.current = true
+    setInstalling(true)
+    setFailed(false)
+
+    setMessage(
+      ko
+        ? `${destination.name}에 다운로드 중…`
+        : `Downloading to ${destination.name}…`
     )
 
     try {
       const result = await window.api.installMod(
-        profile,
+        destination,
         mod.id
       )
 
-      setInstalledRefresh(value => value + 1)
+      setRefresh(value => value + 1)
 
-      setDownloadMessage(
-        result.added === 0
-          ? language === 'ko'
-            ? `${profile.name}에 이미 설치되어 있어요.`
-            : `Already installed in ${profile.name}.`
-          : language === 'ko'
-            ? `${profile.name}: ${mod.name} 설치 완료 · ${result.added}개 파일`
-            : `${profile.name}: ${mod.name} installed · ${result.added} files`
+      setMessage(
+        result.added
+          ? ko
+            ? `${destination.name}: ${mod.name} 설치 완료`
+            : `${destination.name}: ${mod.name} installed`
+          : ko
+            ? `${destination.name}에 이미 설치되어 있습니다.`
+            : `Already installed in ${destination.name}.`
       )
     } catch (error) {
-      setDownloadFailed(true)
-
-      const detail =
+      setFailed(true)
+      setMessage(
         error instanceof Error
           ? error.message
           : String(error)
-
-      setDownloadMessage(
-        `${
-          language === 'ko'
-            ? '다운로드 실패'
-            : 'Download failed'
-        }: ${detail}`
       )
     } finally {
-      downloadLock.current = false
-      setDownloading(false)
+      installLock.current = false
+      setInstalling(false)
     }
   }
 
-  function requestDownload(mod: MoruMod) {
-    if (downloadLock.current) return
-
-    if (profiles.length === 1) {
-      void downloadMod(mod, profiles[0])
-    } else {
-      setDownloadTarget(mod)
-    }
-  }
-
-  const [listMode, setListMode] =
-    useState<ListMode>('recommended')
-
-  const [ram, setRam] = useState(6)
-  const [fontName, setFontName] =
-    useState<string | null>(null)
-
-  const [fontBusy, setFontBusy] = useState(false)
-
-  const [fontError, setFontError] =
-    useState<TranslationKey | null>(null)
-
-  const fontInput = useRef<HTMLInputElement>(null)
-  const currentFont = useRef<FontFace | null>(null)
-  const requestId = useRef(0)
-
-  function activateFont(face: FontFace): void {
-    if (currentFont.current) {
-      document.fonts.delete(currentFont.current)
-    }
-
-    document.fonts.add(face)
-    currentFont.current = face
-
-    document.documentElement.style.setProperty(
-      '--moru-selected-font',
-      '"MORU User Font", "Segoe UI", "Malgun Gothic", sans-serif'
-    )
-  }
-
-  useEffect(() => {
-    let cancelled = false
-
-    void (async () => {
-      try {
-        const saved = await readSavedFont()
-
-        if (!saved || cancelled) return
-
-        const face = await prepareFont(saved.file)
-
-        if (cancelled) return
-
-        activateFont(face)
-        setFontName(saved.name)
-      } catch {
-        if (!cancelled) {
-          setFontError('fontLoadError')
-        }
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  async function onFontFileChange(
-    event: ChangeEvent<HTMLInputElement>
-  ) {
-    const file = event.currentTarget.files?.[0]
-    event.currentTarget.value = ''
-
-    if (!file) return
-
-    setFontError(null)
-
-    if (!file.name.toLowerCase().endsWith('.ttf')) {
-      setFontError('fontInvalidFile')
-      return
-    }
-
-    if (
-      file.size === 0 ||
-      file.size > MAX_FONT_BYTES
-    ) {
-      setFontError('fontTooLarge')
-      return
-    }
-
-    setFontBusy(true)
+  async function openFolder() {
+    setFailed(false)
 
     try {
-      const face = await prepareFont(file)
+      const result =
+        await window.api.openProfileMods(active.id)
 
-      await saveSelectedFont({
-        name: file.name,
-        file
-      })
+      setFailed(!result.ok)
 
-      activateFont(face)
-      setFontName(file.name)
-    } catch (error) {
-      setFontError(
-        error instanceof Error &&
-        error.message === 'font-format'
-          ? 'fontInvalidFile'
-          : 'fontSaveError'
+      setMessage(
+        result.ok
+          ? ko
+            ? `${active.name}의 모드 폴더를 열었습니다.`
+            : `Opened ${active.name} mods folder.`
+          : ko
+            ? '폴더를 열지 못했습니다.'
+            : 'Could not open the folder.'
       )
-    } finally {
-      setFontBusy(false)
-    }
-  }
-
-  async function resetFont() {
-    setFontBusy(true)
-    setFontError(null)
-
-    try {
-      await clearSelectedFont()
-
-      if (currentFont.current) {
-        document.fonts.delete(currentFont.current)
-      }
-
-      currentFont.current = null
-
-      document.documentElement.style.removeProperty(
-        '--moru-selected-font'
-      )
-
-      setFontName(null)
     } catch {
-      setFontError('fontResetError')
-    } finally {
-      setFontBusy(false)
-    }
-  }
-
-  const navigation: {
-    id: Page
-    label: string
-    icon: string
-  }[] = [
-    {
-      id: 'home',
-      label: t('navHome'),
-      icon: '⌂'
-    },
-    {
-      id: 'profiles',
-      label: t('navProfiles'),
-      icon: '▤'
-    },
-    {
-      id: 'discover',
-      label: t('navDiscover'),
-      icon: '▦'
-    },
-    {
-      id: 'installed',
-      label: t('navInstalled'),
-      icon: '▣'
-    },
-    {
-      id: 'settings',
-      label: t('navSettings'),
-      icon: '⚙'
-    }
-  ]
-
-  const titles: Record<Page, string> = {
-    home: t('navHome'),
-    profiles: t('navProfiles'),
-    discover: t('navDiscover'),
-    installed: t('navInstalled'),
-    settings: t('navSettings')
-  }
-
-  const loadMods = useCallback(
-    async (keyword: string) => {
-      const currentRequest = ++requestId.current
-      const normalized = keyword.trim()
-
-      setListMode(
-        normalized ? 'search' : 'recommended'
+      setFailed(true)
+      setMessage(
+        ko
+          ? '폴더를 열지 못했습니다.'
+          : 'Could not open the folder.'
       )
-
-      setLoading(true)
-      setLoaded(false)
-      setSearchError('')
-      setMods([])
-
-      try {
-        const results = await window.api.searchMods(
-          normalized,
-          activeProfile.version
-        )
-
-        if (currentRequest !== requestId.current) {
-          return
-        }
-
-        setMods(results)
-      } catch {
-        if (currentRequest !== requestId.current) {
-          return
-        }
-
-        setSearchError('failed')
-      } finally {
-        if (currentRequest === requestId.current) {
-          setLoading(false)
-          setLoaded(true)
-        }
-      }
-    },
-    [activeProfile.version]
-  )
-
-  useEffect(() => {
-    if (page !== 'discover') return
-
-    setSearch('')
-
-    if (activeProfile.loader === 'fabric') {
-      void loadMods('')
-    } else {
-      requestId.current += 1
-      setMods([])
-      setLoading(false)
-      setLoaded(false)
-      setSearchError('')
     }
-  }, [page, loadMods, activeProfile.loader])
+  }
+
+  const names: Record<Page, string> = {
+    home: ko ? '홈' : 'Home',
+    profiles: ko ? '프로필' : 'Profiles',
+    content: ko ? '콘텐츠' : 'Content',
+    mods: active.name
+  }
+
+  const profileOptions = profiles.map(item => ({
+    value: item.id,
+    label:
+      `${item.name} · ${item.version} · ${loaderName(item.loader)}`
+  }))
 
   return (
-    <div className="moru">
-      <style>{styles}</style>
-
-      <dialog
-        ref={installDialog}
-        className="install-dialog"
-        aria-labelledby="install-title"
-        onCancel={() => setDownloadTarget(null)}
-        onClick={event => {
-          if (
-            event.target !== event.currentTarget
-          ) {
-            return
-          }
-
-          const rect =
-            event.currentTarget.getBoundingClientRect()
-
-          if (
-            event.clientX < rect.left ||
-            event.clientX > rect.right ||
-            event.clientY < rect.top ||
-            event.clientY > rect.bottom
-          ) {
-            setDownloadTarget(null)
-          }
-        }}
-      >
-        <h2 id="install-title">
-          {language === 'ko'
-            ? '다운로드할 구동기 프로필 선택'
-            : 'Choose a launcher profile'}
-        </h2>
-
-        <p>{downloadTarget?.name}</p>
-
-        <p className="muted">
-          {language === 'ko'
-            ? '선택한 프로필 버전에 맞는 모드를 다운로드합니다.'
-            : 'Downloads a mod version compatible with the selected profile.'}
-        </p>
-
-        <div className="install-profile-list">
-          {profiles.map(profile => (
-            <button
-              key={profile.id}
-              type="button"
-              className="secondary-button"
-              disabled={
-                profile.loader !== 'fabric' ||
-                downloading
-              }
-              onClick={() => {
-                if (downloadTarget) {
-                  void downloadMod(
-                    downloadTarget,
-                    profile
-                  )
-                }
-              }}
-            >
-              <strong>{profile.name}</strong>
-              <br />
-              Minecraft {profile.version} ·{' '}
-              {profile.loader === 'fabric'
-                ? 'Fabric'
-                : language === 'ko'
-                  ? 'Vanilla · 모드 설치 불가'
-                  : 'Vanilla · Mods unavailable'}
-            </button>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => setDownloadTarget(null)}
-        >
-          {language === 'ko' ? '취소' : 'Cancel'}
-        </button>
-      </dialog>
-
+    <div className="moru moru-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon">◆</div>
-          MORU
+          <span className="brand-icon">◆</span>
+          <div>
+            MORU
+            <small>MINECRAFT CLIENT</small>
+          </div>
         </div>
 
-        <div className="nav-label">
-          {t('menu')}
-        </div>
-
-        {navigation.map(item => (
-          <button
-            key={item.id}
-            type="button"
-            className={`nav-button ${
-              page === item.id ? 'active' : ''
-            }`}
-            onClick={() => setPage(item.id)}
-          >
-            <span className="nav-symbol">
-              {item.icon}
-            </span>
-            {item.label}
-          </button>
-        ))}
+        <nav
+          aria-label={ko ? '메인 메뉴' : 'Main navigation'}
+        >
+          {(['home', 'profiles', 'content'] as const).map(
+            (id, i) => (
+              <button
+                type="button"
+                key={id}
+                className={
+                  `nav-button ${
+                    page === id ||
+                    (id === 'profiles' && page === 'mods')
+                      ? 'active'
+                      : ''
+                  }`
+                }
+                onClick={() => {
+                  setPage(id)
+                  setMessage('')
+                }}
+              >
+                <span className="nav-symbol">
+                  {['⌂', '▤', '▦'][i]}
+                </span>
+                {names[id]}
+              </button>
+            )
+          )}
+        </nav>
 
         <div className="sidebar-bottom">
-          MORU CLIENT
+          <button
+            type="button"
+            className="nav-button"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <span className="nav-symbol">⚙</span>
+            {ko ? '설정' : 'Settings'}
+          </button>
+          <small>MORU Client</small>
         </div>
       </aside>
 
       <main className="content">
         <header className="topbar">
-          <h2>{titles[page]}</h2>
-
-          <button
-            className="microsoft-account"
-            type="button"
-            disabled
-            title={t('microsoftAccountHelp')}
-            aria-label={t('microsoftSignIn')}
-          >
-            <span
-              className="microsoft-mark"
-              aria-hidden="true"
-            >
-              <span />
-              <span />
-              <span />
-              <span />
-            </span>
-            <span>{t('microsoftSignIn')}</span>
-          </button>
+          <div>
+            <small className="eyebrow">
+              YOUR WORLD, YOUR WAY
+            </small>
+            <h2>{names[page]}</h2>
+          </div>
         </header>
 
-        {downloadMessage && (
+        <GameLaunchPanel launcher={launcher} ko={ko} />
+
+        {message && (
           <p
             role="status"
-            className={
-              downloadFailed
-                ? 'error'
-                : 'inline-note'
-            }
+            className={failed ? 'error' : 'notice'}
           >
-            {downloadMessage}
+            {message}
           </p>
         )}
 
@@ -1413,644 +471,975 @@ function App() {
               </div>
 
               <h1>
-                Minecraft {activeProfile.version}
+                {ko
+                  ? '나만의 세계를 준비하세요.'
+                  : 'Make room for your world.'}
               </h1>
 
-              <div className="muted">
-                {activeProfile.name} ·{' '}
-                {activeProfile.loader === 'fabric'
-                  ? 'Fabric'
-                  : 'Vanilla'}
-              </div>
+              <p className="muted">
+                {active.name} · Minecraft {active.version}
+                {' · '}
+                {loaderName(active.loader)}
+              </p>
 
               <div className="home-profile-picker">
-                <label htmlFor="moru-home-profile">
-                  {t('homeProfileSelect')}
+                <label htmlFor="home-profile">
+                  {ko ? '실행할 프로필' : 'Launcher profile'}
                 </label>
 
                 <MoruSelect
-                  id="moru-home-profile"
-                  variant="hero"
-                  value={activeProfile.id}
+                  id="home-profile"
                   ariaLabel={t('homeProfileSelect')}
+                  value={active.id}
+                  options={profileOptions}
                   onChange={setActiveId}
-                  options={profiles.map(profile => ({
-                    value: profile.id,
-                    label:
-                      `${profile.name} · ${profile.version} · ` +
-                      (
-                        profile.loader === 'fabric'
-                          ? 'Fabric'
-                          : 'Vanilla'
-                      )
-                  }))}
                 />
               </div>
 
-              <button
-                className="play"
-                type="button"
-                disabled
-              >
-                ▶ {t('play')}
-              </button>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="action-button"
+                  disabled={launcher.busy}
+                  onClick={() => {
+                    void launcher.start(active)
+                  }}
+                >
+                  ▶ PLAY
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => openProfile(active)}
+                >
+                  {ko ? '프로필 열기' : 'Open profile'}
+                </button>
+              </div>
             </section>
 
-            <h3 className="section-title">
-              {t('environment')}
-            </h3>
+            <HomeServers
+              profiles={profiles}
+              activeId={active.id}
+              ko={ko}
+              launchBusy={launcher.busy}
+              onLaunch={(profile, address) => {
+                void launcher.start(profile, address)
+              }}
+            />
 
-            <div className="cards">
-              <div className="card">
-                <div className="card-label">
-                  {t('minecraft')}
-                </div>
-                <div className="card-value">
-                  {activeProfile.version}
-                </div>
+            <div className="summary-grid">
+              <div className="panel">
+                <small>{ko ? '프로필' : 'Profiles'}</small>
+                <strong className="stat">
+                  {profiles.length}
+                </strong>
               </div>
 
-              <div className="card">
-                <div className="card-label">
-                  {t('modLoader')}
-                </div>
-                <div className="card-value">
-                  {activeProfile.loader === 'fabric'
-                    ? 'Fabric'
-                    : 'Vanilla'}
-                </div>
+              <div className="panel">
+                <small>
+                  {ko ? '현재 버전' : 'Current version'}
+                </small>
+                <strong className="stat">
+                  {active.version}
+                </strong>
               </div>
 
-              <div className="card">
-                <div className="card-label">
-                  {t('modCount')}
-                </div>
-                <div className="card-value">
-                  {installedError
-                    ? '—'
-                    : installedFiles.length}
-                </div>
+              <div className="panel">
+                <small>
+                  {ko
+                    ? '현재 프로필의 모드'
+                    : 'Mods in this profile'}
+                </small>
+                <strong className="stat">
+                  {installedFailed ? '—' : installed.length}
+                </strong>
               </div>
             </div>
           </>
         )}
 
         {page === 'profiles' && (
-          <section className="panel">
-            <div className="eyebrow">
-              MINECRAFT RELEASES
+          <>
+            <div className="toolbar">
+              <input
+                className="search"
+                aria-label={
+                  ko ? '프로필 검색' : 'Search profiles'
+                }
+                placeholder={
+                  ko
+                    ? '프로필 이름 또는 버전 검색'
+                    : 'Search profile name or version'
+                }
+                value={profileQuery}
+                onChange={event =>
+                  setProfileQuery(event.target.value)
+                }
+              />
+
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => setCreating(true)}
+              >
+                {t('createProfile')}
+              </button>
             </div>
 
-            <h2>{t('profilesTitle')}</h2>
-            <p className="muted">
-              {t('profilesHelp')}
-            </p>
-
-            <div className="profile-list">
-              {profiles.map(profile => (
-                <div
-                  key={profile.id}
-                  className={`profile-card ${
-                    profile.id === activeProfile.id
-                      ? 'is-active'
-                      : ''
-                  }`}
-                >
-                  <div>
-                    <strong>{profile.name}</strong>
-                    <div className="muted">
-                      Minecraft {profile.version} ·{' '}
-                      {profile.loader === 'fabric'
-                        ? 'Fabric'
-                        : 'Vanilla'}
-                    </div>
-                  </div>
-
-                  <div className="profile-buttons">
-                    {profile.id === activeProfile.id ? (
-                      <span className="eyebrow">
-                        {t('activeProfile')}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() =>
-                          setActiveId(profile.id)
-                        }
-                      >
-                        {t('selectProfile')}
-                      </button>
-                    )}
-
+            <div className="profile-grid">
+              {profiles
+                .filter(item =>
+                  `${item.name} ${item.version}`
+                    .toLowerCase()
+                    .includes(profileQuery.toLowerCase())
+                )
+                .map(profile => (
+                  <article
+                    className={
+                      `profile-tile ${
+                        profile.id === active.id
+                          ? 'selected'
+                          : ''
+                      }`
+                    }
+                    key={profile.id}
+                  >
                     <button
                       type="button"
-                      className="secondary-button"
-                      disabled={
-                        profiles.length <= 1 ||
-                        downloading
-                      }
-                      onClick={() =>
-                        removeProfile(profile.id)
-                      }
+                      className="profile-open"
+                      onClick={() => openProfile(profile)}
                     >
-                      {t('deleteProfile')}
+                      <ProfileIcon profile={profile} />
+                      <strong>{profile.name}</strong>
+
+                      <span className="muted">
+                        Minecraft {profile.version}
+                        {' · '}
+                        {loaderName(profile.loader)}
+                      </span>
                     </button>
-                  </div>
-                </div>
-              ))}
-            </div>
 
-            <h3 className="section-title">
-              {t('createProfile')}
-            </h3>
+                    <div className="profile-tile-footer">
+                      {profile.id === DEFAULT.id && (
+                        <small>
+                          {ko
+                            ? '기본 프로필 · 보호됨'
+                            : 'Default profile · Protected'}
+                        </small>
+                      )}
 
-            <div className="new-profile">
-              <div className="profile-field">
-                <label htmlFor="moru-profile-name">
-                  {t('profileName')}
-                </label>
-
-                <input
-                  id="moru-profile-name"
-                  maxLength={40}
-                  value={newName}
-                  onChange={event =>
-                    setNewName(event.target.value)
-                  }
-                  placeholder={t('profileNameExample')}
-                />
-              </div>
-
-              <div className="profile-field">
-                <label htmlFor="moru-version">
-                  {t('gameVersion')}
-                </label>
-
-                <MoruSelect
-                  id="moru-version"
-                  ariaLabel={t('gameVersion')}
-                  disabled={!catalog}
-                  value={newVersion}
-                  options={
-                    catalog?.releases.map(version => ({
-                      value: version,
-                      label: version
-                    })) ?? []
-                  }
-                  onChange={version => {
-                    setNewVersion(version)
-
-                    if (
-                      newLoader === 'fabric' &&
-                      !catalog?.fabric.includes(version)
-                    ) {
-                      setNewLoader('vanilla')
-                    }
-                  }}
-                />
-              </div>
-
-              <div className="profile-field">
-                <label htmlFor="moru-loader">
-                  {t('modLoader')}
-                </label>
-
-                <MoruSelect
-                  id="moru-loader"
-                  ariaLabel={t('modLoader')}
-                  value={newLoader}
-                  onChange={value =>
-                    setNewLoader(value as ModLoader)
-                  }
-                  options={[
-                    {
-                      value: 'vanilla',
-                      label: 'Vanilla'
-                    },
-                    {
-                      value: 'fabric',
-                      label: 'Fabric',
-                      disabled:
-                        !catalog?.fabric.includes(
-                          newVersion
-                        )
-                    }
-                  ]}
-                />
-              </div>
-
-              <div
-                className="profile-field"
-                style={{ justifyContent: 'flex-end' }}
-              >
-                <button
-                  className="action-button"
-                  type="button"
-                  disabled={
-                    !newName.trim() ||
-                    !catalog?.releases.includes(
-                      newVersion
-                    ) ||
-                    profiles.length >= 40 ||
-                    (
-                      newLoader === 'fabric' &&
-                      !catalog.fabric.includes(
-                        newVersion
-                      )
-                    )
-                  }
-                  onClick={createProfile}
-                >
-                  {t('createProfile')}
-                </button>
-              </div>
-            </div>
-
-            {catalogLoading && (
-              <p className="inline-note">
-                {t('loadingVersions')}
-              </p>
-            )}
-
-            {catalogError && (
-              <p className="error">
-                {t('failedVersions')}
-              </p>
-            )}
-
-            <p className="inline-note">
-              {t('releaseOnlyNote')}
-            </p>
-
-            {!catalogLoading &&
-              !catalogError &&
-              !catalog?.fabricAvailable && (
-                <p className="inline-note">
-                  {t('fabricUnavailable')}
-                </p>
-              )}
-          </section>
-        )}
-
-        {page === 'discover' && (
-          <section className="panel">
-            <div className="eyebrow">MODRINTH</div>
-
-            <h2>{t('discoverTitle')}</h2>
-
-            <p className="muted">
-              Minecraft {activeProfile.version} ·{' '}
-              {activeProfile.loader === 'fabric'
-                ? 'Fabric'
-                : 'Vanilla'}
-            </p>
-
-            {activeProfile.loader !== 'fabric' ? (
-              <div className="empty">
-                <p>{t('fabricProfileRequired')}</p>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => setPage('profiles')}
-                >
-                  {t('navProfiles')}
-                </button>
-              </div>
-            ) : (
-              <>
-                <form
-                  className="search-row"
-                  onSubmit={event => {
-                    event.preventDefault()
-                    void loadMods(search)
-                  }}
-                >
-                  <input
-                    className="search"
-                    type="search"
-                    placeholder={t('searchPlaceholder')}
-                    value={search}
-                    onChange={event =>
-                      setSearch(event.target.value)
-                    }
-                  />
-
-                  <button
-                    className="action-button"
-                    type="submit"
-                    disabled={loading}
-                  >
-                    {loading
-                      ? t('searching')
-                      : t('search')}
-                  </button>
-                </form>
-
-                <div className="list-heading">
-                  <h3>
-                    {listMode === 'recommended'
-                      ? t('recommended')
-                      : t('searchResults')}
-                  </h3>
-                  <span>
-                    {listMode === 'recommended'
-                      ? t('sortedByDownloads')
-                      : `${mods.length} ${t('shownCount')}`}
-                  </span>
-                </div>
-
-                {searchError && (
-                  <div className="error">
-                    {t('failedSearch')}
-                  </div>
-                )}
-
-                {loading && (
-                  <div className="empty">
-                    {t('loadingMods')}
-                  </div>
-                )}
-
-                {!loading &&
-                  !searchError &&
-                  loaded &&
-                  mods.length === 0 && (
-                    <div className="empty">
-                      {t('emptySearch')}
+                      <small>
+                        {profile.id === active.id
+                          ? t('activeProfile')
+                          : ''}
+                      </small>
                     </div>
-                  )}
-
-                {!loading && (
-                  <div className="mod-list">
-                    {mods.map(mod => {
-                      const safeIcon =
-                        mod.icon?.startsWith(
-                          'https://cdn.modrinth.com/'
-                        )
-                          ? mod.icon
-                          : null
-
-                      return (
-                        <div
-                          key={mod.id}
-                          className="mod-card"
-                        >
-                          <div className="mod-icon">
-                            <span>
-                              {mod.name
-                                .charAt(0)
-                                .toUpperCase()}
-                            </span>
-
-                            {safeIcon && (
-                              <img
-                                src={safeIcon}
-                                alt=""
-                                referrerPolicy="no-referrer"
-                                onError={event => {
-                                  event.currentTarget
-                                    .style.display = 'none'
-                                }}
-                              />
-                            )}
-                          </div>
-
-                          <div className="mod-info">
-                            <div className="mod-name">
-                              {mod.name}
-                            </div>
-                            <div className="mod-desc">
-                              {localizedModDescription(
-                                mod,
-                                language
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="downloads">
-                            ↓{' '}
-                            {mod.downloads.toLocaleString(
-                              language === 'ko'
-                                ? 'ko-KR'
-                                : 'en-US'
-                            )}{' '}
-                            {t('downloadsUnit')}
-                          </div>
-
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={downloading}
-                            aria-label={
-                              `${mod.name} ` +
-                              (
-                                language === 'ko'
-                                  ? '다운로드'
-                                  : 'Download'
-                              )
-                            }
-                            onClick={() =>
-                              requestDownload(mod)
-                            }
-                          >
-                            {language === 'ko'
-                              ? '다운로드'
-                              : 'Download'}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-          </section>
+                  </article>
+                ))}
+            </div>
+          </>
         )}
 
-        {page === 'installed' && (
-          <section className="panel">
-            <h2>{t('navInstalled')}</h2>
+        {page === 'mods' && (
+          <>
+            <button
+              type="button"
+              className="back-button"
+              onClick={() => setPage('profiles')}
+            >
+              ← {ko ? '프로필 목록' : 'Profiles'}
+            </button>
 
-            <p className="muted">
-              {activeProfile.name} · Minecraft{' '}
-              {activeProfile.version}
-            </p>
+            <div className="profile-heading">
+              <ProfileIcon profile={active} />
 
-            {installedError ? (
-              <p className="error">
-                {language === 'ko'
-                  ? '설치 목록을 읽지 못했습니다.'
-                  : 'Could not read installed mods.'}
-              </p>
-            ) : installedFiles.length > 0 ? (
-              <div className="mod-list">
-                {installedFiles.map(file => (
-                  <div
-                    className="card"
-                    key={file.projectId}
-                  >
-                    {file.filename}
-                  </div>
-                ))}
+              <div>
+                <h1>{active.name}</h1>
+                <p className="muted">
+                  Minecraft {active.version}
+                  {' · '}
+                  {loaderName(active.loader)}
+                </p>
               </div>
-            ) : (
-              <div className="empty">
-                <p>{t('emptyInstalled')}</p>
+
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ marginLeft: 'auto' }}
+                onClick={() =>
+                  setProfileSettingsOpen(true)
+                }
+              >
+                {ko
+                  ? '⚙ 프로필 설정'
+                  : '⚙ Profile settings'}
+              </button>
+            </div>
+
+            <section className="panel">
+              <div className="mods-toolbar">
+                <h3>{t('navInstalled')}</h3>
+
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setPage('discover')}
+                  onClick={() => {
+                    void openFolder()
+                  }}
                 >
-                  {t('navDiscover')}
+                  {ko
+                    ? '모드 폴더 열기'
+                    : 'Open mods folder'}
                 </button>
-              </div>
-            )}
-          </section>
-        )}
 
-        {page === 'settings' && (
-          <section className="panel">
-            <h2>{t('settingsTitle')}</h2>
-
-            <div className="setting-row">
-              <div>
-                <strong>{t('language')}</strong>
-                <p className="muted">
-                  {t('languageHelp')}
-                </p>
-              </div>
-
-              <div
-                style={{
-                  width: 170,
-                  maxWidth: '55%'
-                }}
-              >
-                <MoruSelect
-                  id="moru-language"
-                  ariaLabel={t('language')}
-                  value={language}
-                  onChange={value =>
-                    setLanguage(value as Language)
-                  }
-                  options={[
-                    {
-                      value: 'ko',
-                      label: t('languageKorean')
-                    },
-                    {
-                      value: 'en',
-                      label: t('languageEnglish')
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() =>
+                      setRefresh(value => value + 1)
                     }
-                  ]}
-                />
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div>
-                <strong>{t('font')}</strong>
-                <p className="muted">
-                  {t('fontHelp')}
-                </p>
-              </div>
-
-              <div className="font-control">
-                <div className="font-name">
-                  {fontName ?? t('fontDefault')}
-                </div>
-
-                <div className="font-actions">
-                  <input
-                    ref={fontInput}
-                    type="file"
-                    accept=".ttf,font/ttf"
-                    aria-label={t('fontChooseFile')}
-                    style={{ display: 'none' }}
-                    onChange={event => {
-                      void onFontFileChange(event)
-                    }}
-                  />
+                  >
+                    {ko ? '새로고침' : 'Refresh'}
+                  </button>
 
                   <button
                     type="button"
-                    className="font-button"
-                    disabled={fontBusy}
-                    onClick={() =>
-                      fontInput.current?.click()
-                    }
+                    className="action-button"
+                    onClick={() => setPage('content')}
                   >
-                    {t('fontChooseFile')}
+                    {ko ? '콘텐츠 추가' : 'Add content'}
                   </button>
+                </div>
+              </div>
 
-                  {fontName && (
-                    <button
-                      type="button"
-                      className="font-button"
-                      disabled={fontBusy}
-                      onClick={() => {
-                        void resetFont()
-                      }}
+              {installedFailed ? (
+                <p className="error">
+                  {ko
+                    ? '설치 목록을 읽지 못했습니다.'
+                    : 'Could not read installed mods.'}
+                </p>
+              ) : installed.length ? (
+                <div className="mod-list">
+                  {installed.map(item => (
+                    <div
+                      className="mod-card"
+                      key={item.projectId}
                     >
-                      {t('fontReset')}
-                    </button>
-                  )}
+                      <span className="mod-icon">▦</span>
+
+                      <div className="mod-info">
+                        <strong>{item.filename}</strong>
+                        <small className="muted">
+                          Modrinth
+                        </small>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-
-                {fontError && (
-                  <div className="font-error">
-                    {t(fontError)}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="setting-row">
-              <div>
-                <strong>{t('gameVersion')}</strong>
-                <p className="muted">
-                  Minecraft Java Edition
+              ) : (
+                <p className="empty">
+                  {t('emptyInstalled')}
                 </p>
-              </div>
+              )}
 
-              <strong>
-                {activeProfile.version}
-              </strong>
-            </div>
+              <p className="inline-note">
+                {ko
+                  ? '현재 목록은 MORU에서 다운로드한 모드를 표시합니다. 수동 파일 확인은 폴더 열기를 사용해 주세요.'
+                  : 'This list currently shows mods downloaded by MORU. Open the folder to check manual files.'}
+              </p>
+            </section>
+          </>
+        )}
 
-            <div className="setting-row">
-              <div>
-                <strong>
-                  {t('memoryAllocation')}
-                </strong>
-                <p className="muted">
-                  {t('memoryHelp')}
-                </p>
-              </div>
-
-              <div>
-                <strong>{ram} GB</strong>
-                <div>
-                  <input
-                    className="ram-slider"
-                    type="range"
-                    min="2"
-                    max="16"
-                    step="1"
-                    value={ram}
-                    onChange={event =>
-                      setRam(Number(event.target.value))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
+        {page === 'content' && (
+          <ContentBrowser
+            profiles={profiles}
+            active={active}
+            onSelectProfile={setActiveId}
+            language={language}
+            installing={installing}
+            onInstall={item => {
+              void install(item)
+            }}
+          />
         )}
       </main>
+
+      <CreateProfileDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreate={createProfile}
+        ko={ko}
+        releases={catalog?.releases ?? []}
+        loading={!catalog && !catalogFailed}
+        releasesFailed={catalogFailed}
+        initialVersion={active.version}
+      />
+
+      <ProfileSettingsDialog
+        open={profileSettingsOpen}
+        profile={active}
+        ko={ko}
+        locked={installing || launcher.busy}
+        onClose={() => setProfileSettingsOpen(false)}
+        onDelete={removeProfile}
+      />
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        preferences={preferences}
+      />
     </div>
   )
 }
 
-export default App
+type Server = {
+  id: string
+  name: string
+  address: string
+  profileId: string
+}
+
+type Saved = {
+  servers: Server[]
+  selectedId: string
+}
+
+const SERVER_KEY = 'moru-home-servers-v1'
+
+function readSaved(): Saved {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(SERVER_KEY) || 'null'
+    )
+
+    if (!value || !Array.isArray(value.servers)) {
+      return { servers: [], selectedId: '' }
+    }
+
+    const seen = new Set<string>()
+
+    const servers = value.servers
+      .filter((item: unknown): item is Server => {
+        if (!item || typeof item !== 'object') {
+          return false
+        }
+
+        const s = item as Partial<Server>
+
+        if (
+          typeof s.id !== 'string' ||
+          !s.id ||
+          seen.has(s.id) ||
+          typeof s.name !== 'string' ||
+          typeof s.address !== 'string' ||
+          typeof s.profileId !== 'string'
+        ) {
+          return false
+        }
+
+        seen.add(s.id)
+        return true
+      })
+      .slice(0, 100)
+
+    return {
+      servers,
+      selectedId: servers.some(
+        (s: Server) => s.id === value.selectedId
+      )
+        ? value.selectedId
+        : servers[0]?.id || ''
+    }
+  } catch {
+    return { servers: [], selectedId: '' }
+  }
+}
+
+function validAddress(address: string): boolean {
+  if (
+    !address ||
+    address.length > 253 ||
+    /[\s/@?#\\]/.test(address)
+  ) {
+    return false
+  }
+
+  const match = address.startsWith('[')
+    ? /^(\[[0-9a-fA-F:.]+\])(?::([0-9]+))?$/.exec(address)
+    : /^([^:]+)(?::([0-9]+))?$/.exec(address)
+
+  if (
+    !match ||
+    (
+      match[2] &&
+      (+match[2] < 1 || +match[2] > 65535)
+    )
+  ) {
+    return false
+  }
+
+  try {
+    const host =
+      new URL(`http://${match[1]}`).hostname
+
+    return (
+      host.startsWith('[') ||
+      host.split('.').every(
+        label =>
+          /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(
+            label
+          )
+      )
+    )
+  } catch {
+    return false
+  }
+}
+
+function HomeServers({
+  profiles,
+  activeId,
+  ko,
+  launchBusy,
+  onLaunch
+}: {
+  profiles: Profile[]
+  activeId: string
+  ko: boolean
+  launchBusy: boolean
+  onLaunch: (profile: Profile, address: string) => void
+}) {
+  const [saved, setSaved] = useState<Saved>(readSaved)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [address, setAddress] = useState('')
+  const [profileId, setProfileId] = useState(activeId)
+  const [error, setError] = useState('')
+
+  const selected = saved.servers.find(
+    item => item.id === saved.selectedId
+  )
+
+  const selectedProfile = profiles.find(
+    item => item.id === selected?.profileId
+  )
+
+  function commit(next: Saved): boolean {
+    try {
+      localStorage.setItem(
+        SERVER_KEY,
+        JSON.stringify(next)
+      )
+
+      setSaved(next)
+      setError('')
+      return true
+    } catch {
+      setError(
+        ko
+          ? '저장하지 못했습니다. 저장 공간을 확인해 주세요.'
+          : 'Could not save. Check storage and try again.'
+      )
+      return false
+    }
+  }
+
+  function start(server?: Server) {
+    setEditing(server?.id ?? '')
+    setName(server?.name ?? '')
+    setAddress(server?.address ?? '')
+    setProfileId(server?.profileId ?? activeId)
+    setError('')
+  }
+
+  function save() {
+    if (!name.trim()) {
+      setError(
+        ko
+          ? '서버 이름을 입력해 주세요.'
+          : 'Enter a server name.'
+      )
+      return
+    }
+
+    if (!validAddress(address.trim())) {
+      setError(
+        ko
+          ? '서버 주소를 확인해 주세요. 예: play.example.com:25565 (포트 1~65535)'
+          : 'Check the address. Example: play.example.com:25565 (port 1–65535)'
+      )
+      return
+    }
+
+    if (
+      !profiles.some(item => item.id === profileId)
+    ) {
+      setError(
+        ko
+          ? '사용할 프로필을 선택해 주세요.'
+          : 'Choose an available profile.'
+      )
+      return
+    }
+
+    if (
+      editing === '' &&
+      saved.servers.length >= 100
+    ) {
+      return
+    }
+
+    const item: Server = {
+      id: editing || crypto.randomUUID(),
+      name: name.trim(),
+      address: address.trim(),
+      profileId
+    }
+
+    const servers = editing
+      ? saved.servers.map(
+          s => s.id === editing ? item : s
+        )
+      : [...saved.servers, item]
+
+    if (
+      commit({
+        servers,
+        selectedId: item.id
+      })
+    ) {
+      setEditing(null)
+    }
+  }
+
+  function remove(server: Server) {
+    if (
+      !window.confirm(
+        ko
+          ? `“${server.name}” 서버 바로가기를 삭제할까요? 구동기 프로필과 파일은 유지됩니다.`
+          : `Delete “${server.name}”? Its profile and files will be kept.`
+      )
+    ) {
+      return
+    }
+
+    const servers = saved.servers.filter(
+      item => item.id !== server.id
+    )
+
+    if (
+      commit({
+        servers,
+        selectedId:
+          saved.selectedId === server.id
+            ? servers[0]?.id || ''
+            : saved.selectedId
+      }) &&
+      editing === server.id
+    ) {
+      setEditing(null)
+    }
+  }
+
+  return (
+    <section
+      className="panel"
+      style={{ marginTop: 20 }}
+      aria-label={
+        ko ? '서버 바로가기' : 'Server shortcuts'
+      }
+    >
+      <div className="toolbar">
+        <div>
+          <small className="eyebrow">YOUR SERVERS</small>
+          <h3>
+            {ko ? '서버 바로가기' : 'Server shortcuts'}
+          </h3>
+        </div>
+
+        <button
+          type="button"
+          className="action-button"
+          disabled={saved.servers.length >= 100}
+          onClick={() => start()}
+        >
+          {ko ? '+ 서버 추가' : '+ Add server'}
+        </button>
+      </div>
+
+      {error && (
+        <p role="alert" className="error">{error}</p>
+      )}
+
+      {editing !== null && (
+        <form
+          className="create-profile"
+          onSubmit={event => {
+            event.preventDefault()
+            save()
+          }}
+        >
+          <h3>
+            {editing
+              ? ko ? '서버 수정' : 'Edit server'
+              : ko ? '새 서버' : 'New server'}
+          </h3>
+
+          <div className="form-grid">
+            <label htmlFor="server-name">
+              {ko ? '서버 이름' : 'Server name'}
+
+              <input
+                id="server-name"
+                required
+                maxLength={40}
+                value={name}
+                onChange={event =>
+                  setName(event.target.value)
+                }
+                placeholder={
+                  ko
+                    ? '친구들과 하는 서버'
+                    : 'Friends server'
+                }
+              />
+            </label>
+
+            <label htmlFor="server-address">
+              {ko ? '서버 주소' : 'Server address'}
+
+              <input
+                id="server-address"
+                required
+                maxLength={253}
+                value={address}
+                onChange={event =>
+                  setAddress(event.target.value)
+                }
+                placeholder="play.example.com:25565"
+                autoCapitalize="none"
+                spellCheck={false}
+              />
+            </label>
+
+            <div>
+              <label htmlFor="server-profile">
+                {ko
+                  ? '사용할 구동기 프로필'
+                  : 'Launcher profile'}
+              </label>
+
+              <MoruSelect
+                id="server-profile"
+                ariaLabel={
+                  ko
+                    ? '서버에 사용할 프로필'
+                    : 'Profile for server'
+                }
+                value={profileId}
+                options={profiles.map(item => ({
+                  value: item.id,
+                  label:
+                    `${item.name} · ${item.version} · ${loaderName(item.loader)}`
+                }))}
+                onChange={setProfileId}
+              />
+
+              {!profiles.some(
+                item => item.id === profileId
+              ) && (
+                <p className="error">
+                  {ko
+                    ? '연결된 프로필이 없습니다. 다시 선택해 주세요.'
+                    : 'The linked profile is missing. Choose another.'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="button-row">
+            <button
+              className="action-button"
+              type="submit"
+            >
+              {ko ? '저장' : 'Save'}
+            </button>
+
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => {
+                setEditing(null)
+                setError('')
+              }}
+            >
+              {ko ? '취소' : 'Cancel'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!saved.servers.length && (
+        <p className="empty">
+          {ko
+            ? '서버 주소와 사용할 프로필을 등록해 보세요.'
+            : 'Add a server address and its launcher profile.'}
+        </p>
+      )}
+
+      <div className="profile-grid">
+        {saved.servers.map(server => {
+          const profile = profiles.find(
+            item => item.id === server.profileId
+          )
+
+          const chosen =
+            server.id === saved.selectedId
+
+          return (
+            <article
+              className={
+                `profile-tile ${chosen ? 'selected' : ''}`
+              }
+              key={server.id}
+            >
+              <button
+                className="profile-open"
+                type="button"
+                aria-pressed={chosen}
+                onClick={() =>
+                  commit({
+                    ...saved,
+                    selectedId: server.id
+                  })
+                }
+              >
+                <ServerIcon
+                  address={server.address}
+                  ko={ko}
+                />
+
+                <strong>{server.name}</strong>
+
+                <span
+                  className="muted"
+                  style={{ overflowWrap: 'anywhere' }}
+                >
+                  {server.address}
+                </span>
+
+                <small
+                  className={profile ? 'muted' : 'error'}
+                >
+                  {profile
+                    ? `${profile.name} · ${profile.version} · ${loaderName(profile.loader)}`
+                    : ko
+                      ? '연결된 프로필 없음 · 수정 필요'
+                      : 'Linked profile missing · Edit required'}
+                </small>
+              </button>
+
+              <div className="profile-tile-footer">
+                <span>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => start(server)}
+                  >
+                    {ko ? '수정' : 'Edit'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => remove(server)}
+                  >
+                    {ko ? '삭제' : 'Delete'}
+                  </button>
+                </span>
+
+                <small>
+                  {chosen
+                    ? ko ? '선택됨' : 'Selected'
+                    : ''}
+                </small>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
+      {selected && (
+        <div
+          className="button-row"
+          style={{ marginTop: 16 }}
+        >
+          <button
+            type="button"
+            className="action-button"
+            disabled={launchBusy || !selectedProfile}
+            onClick={() => {
+              if (selectedProfile) {
+                onLaunch(
+                  selectedProfile,
+                  selected.address
+                )
+              }
+            }}
+          >
+            {ko
+              ? '▶ 선택한 서버 접속'
+              : '▶ Join selected server'}
+          </button>
+
+          <span
+            className={
+              selectedProfile ? 'muted' : 'error'
+            }
+          >
+            {selected.name}
+            {' · '}
+            {selectedProfile?.name ??
+              (ko
+                ? '사용할 프로필을 다시 지정해 주세요.'
+                : 'Choose another profile.')}
+          </span>
+        </div>
+      )}
+
+      <p className="inline-note">
+        {ko
+          ? '서버를 선택하고 접속하면 연결된 프로필로 Minecraft를 실행합니다.'
+          : 'Joining starts Minecraft using the selected server’s linked profile.'}
+      </p>
+    </section>
+  )
+}
+
+function ServerIcon({
+  address,
+  ko
+}: {
+  address: string
+  ko: boolean
+}) {
+  const [result, setResult] = useState<{
+    address: string
+    icon: string | null
+  } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    void window.api.getServerIcon(address)
+      .then(icon => {
+        if (!cancelled) setResult({ address, icon })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResult({ address, icon: null })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [address])
+
+  const icon =
+    result?.address === address
+      ? result.icon
+      : null
+
+  return (
+    <span
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8
+      }}
+    >
+      <span
+        className="profile-emblem"
+        style={{ overflow: 'hidden' }}
+      >
+        {icon ? (
+          <img
+            src={icon}
+            alt={ko ? '서버 아이콘' : 'Server icon'}
+            width={54}
+            height={54}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              imageRendering: 'pixelated'
+            }}
+            onError={() =>
+              setResult({ address, icon: null })
+            }
+          />
+        ) : '⌂'}
+      </span>
+    </span>
+  )
+}
+
+function loaderName(loader: Profile['loader']): string {
+  return {
+    vanilla: 'Vanilla',
+    fabric: 'Fabric',
+    forge: 'Forge',
+    neoforge: 'NeoForge'
+  }[loader]
+}
+
+function ProfileIcon({
+  profile
+}: {
+  profile: Profile
+}) {
+  const [failedIcon, setFailedIcon] =
+    useState<string | null>(null)
+
+  const icon =
+    typeof profile.icon === 'string' &&
+    profile.icon.length <= 100000 &&
+    /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(
+      profile.icon
+    ) &&
+    profile.icon !== failedIcon
+      ? profile.icon
+      : null
+
+  return (
+    <span
+      className="profile-emblem"
+      style={{
+        overflow: 'hidden',
+        flexShrink: 0
+      }}
+    >
+      {icon ? (
+        <img
+          src={icon}
+          alt=""
+          width={52}
+          height={52}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover'
+          }}
+          onError={() =>
+            setFailedIcon(icon)
+          }
+        />
+      ) : '◆'}
+    </span>
+  )
+}

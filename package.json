@@ -23,7 +23,10 @@
   "dependencies": {
     "@azure/msal-node": "^7.2.1",
     "@electron-toolkit/preload": "^3.0.2",
-    "@electron-toolkit/utils": "^4.0.0"
+    "@electron-toolkit/utils": "^4.0.0",
+    "@xmcl/core": "2.16.3",
+    "@xmcl/installer": "6.3.7",
+    "skinview3d": "^3.4.2"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.1",
@@ -45,5 +48,8 @@
     "react-dom": "^19.3.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"
+  },
+  "overrides": {
+    "@xmcl/unzip": "2.1.2"
   }
 }

@@ -1,0 +1,359 @@
+/* 기존 배치와 글꼴을 유지하면서 테마 색상만 적용합니다. */
+
+:root[data-moru-theme] {
+  color-scheme: dark;
+
+  --moru-text: #edf5f1;
+
+  --moru-muted: color-mix(
+    in srgb,
+    var(--moru-accent) 14%,
+    #a5b1ae
+  );
+
+  --moru-border: color-mix(
+    in srgb,
+    var(--moru-accent) 25%,
+    var(--moru-panel)
+  );
+
+  --moru-hover: color-mix(
+    in srgb,
+    var(--moru-accent) 13%,
+    var(--moru-panel)
+  );
+
+  --moru-selected: color-mix(
+    in srgb,
+    var(--moru-accent) 22%,
+    var(--moru-panel)
+  );
+
+  --moru-input: color-mix(
+    in srgb,
+    var(--moru-bg) 75%,
+    var(--moru-panel)
+  );
+}
+
+/* 앱 배경 */
+
+html[data-moru-theme] body,
+html[data-moru-theme] .moru-shell,
+html[data-moru-theme] .moru-shell > .content {
+  background: var(--moru-bg) !important;
+  color: var(--moru-text) !important;
+}
+
+/* 사이드바와 상단바 */
+
+html[data-moru-theme] .sidebar,
+html[data-moru-theme] .moru-desktop-titlebar {
+  background: color-mix(
+    in srgb,
+    var(--moru-panel) 65%,
+    var(--moru-bg)
+  ) !important;
+
+  border-color: var(--moru-border) !important;
+  color: var(--moru-text) !important;
+}
+
+/* 카드와 플로팅 설정창 */
+
+html[data-moru-theme] :is(
+  .panel,
+  .profile-tile,
+  .mod-card,
+  .content-target,
+  .create-profile,
+  .settings-dialog,
+  .moru-create-dialog,
+  .moru-account-dialog,
+  .moru-login-required,
+  .video-card,
+  .moru-client-settings .client-card:not(.client-danger),
+  .moru-about details
+) {
+  background: var(--moru-panel) !important;
+  border-color: var(--moru-border) !important;
+  color: var(--moru-text) !important;
+}
+
+html[data-moru-theme] :is(
+  .settings-heading,
+  .settings-footer,
+  .settings-nav,
+  .sidebar-bottom,
+  .profile-tile-footer,
+  .moru-create-dialog header,
+  .moru-create-dialog footer
+) {
+  border-color: var(--moru-border) !important;
+}
+
+/* 기본 메뉴와 버튼 */
+
+html[data-moru-theme] :is(
+  .nav-button,
+  .back-button,
+  .ghost
+) {
+  background: transparent !important;
+  color: var(--moru-muted) !important;
+  border-color: var(--moru-border) !important;
+}
+
+/* 선택한 메뉴와 프로필 */
+
+html[data-moru-theme] :is(
+  .nav-button.active,
+  .settings-nav button.selected,
+  .profile-tile.selected,
+  .create-loader-grid label.selected,
+  .moru-select-option.is-selected
+) {
+  background: var(--moru-selected) !important;
+  border-color: var(--moru-accent) !important;
+  color: var(--moru-accent) !important;
+}
+
+/* 주요 버튼과 강조 요소 */
+
+html[data-moru-theme] :is(
+  .action-button,
+  .brand-icon,
+  .profile-emblem,
+  .moru-select-dot
+) {
+  background: var(--moru-accent) !important;
+  color: var(--moru-bg) !important;
+}
+
+html[data-moru-theme] :is(
+  .eyebrow,
+  .moru-select-check,
+  .moru-caption-brand > span:first-child
+) {
+  color: var(--moru-accent) !important;
+}
+
+/* 보조 설명 */
+
+html[data-moru-theme] :is(
+  .muted,
+  .inline-note,
+  .empty,
+  .settings-nav button,
+  .moru-caption-brand small,
+  .moru-client-settings .client-path
+) {
+  color: var(--moru-muted) !important;
+}
+
+/* 보조 버튼과 드롭다운 */
+
+html[data-moru-theme] :is(
+  .secondary-button,
+  .moru-account-trigger,
+  .moru-select-trigger,
+  .moru-select-menu,
+  .create-vanilla,
+  .create-icon-picker,
+  .moru-about a
+) {
+  background: var(--moru-input) !important;
+  border-color: var(--moru-border) !important;
+  color: var(--moru-text) !important;
+}
+
+/* 입력창 */
+
+html[data-moru-theme] :is(
+  .moru-shell,
+  .settings-dialog,
+  .moru-create-dialog
+) :is(
+  input:not([type=radio]):not([type=checkbox]):not([type=range]),
+  select,
+  textarea
+) {
+  background: var(--moru-input) !important;
+  border-color: var(--moru-border) !important;
+  color: var(--moru-text) !important;
+}
+
+html[data-moru-theme] :is(
+  .moru-shell,
+  .settings-dialog,
+  .moru-create-dialog
+) :is(input, select, textarea):focus-visible {
+  outline: 2px solid var(--moru-accent) !important;
+  outline-offset: 2px;
+}
+
+html[data-moru-theme] :is(
+  .moru-shell,
+  .settings-dialog,
+  .moru-create-dialog
+) :is(
+  input[type=radio],
+  input[type=checkbox],
+  input[type=range]
+) {
+  accent-color: var(--moru-accent);
+}
+
+/* 마우스를 올린 상태 */
+
+html[data-moru-theme] :is(
+  .secondary-button:hover,
+  .ghost:hover,
+  .nav-button:hover,
+  .moru-select-trigger:hover,
+  .moru-select-option:hover,
+  .moru-select-option.is-highlighted,
+  .moru-about a:hover
+) {
+  background: var(--moru-hover) !important;
+  color: var(--moru-text) !important;
+}
+
+/* 드롭다운 장식 */
+
+html[data-moru-theme] .moru-select-arrow {
+  border-color: var(--moru-muted) !important;
+}
+
+html[data-moru-theme] .moru-select-dot {
+  box-shadow: 0 0 0 4px color-mix(
+    in srgb,
+    var(--moru-accent) 14%,
+    transparent
+  ) !important;
+}
+
+html[data-moru-theme] .moru-select-trigger.is-open {
+  border-color: var(--moru-accent) !important;
+
+  box-shadow: 0 0 0 3px color-mix(
+    in srgb,
+    var(--moru-accent) 14%,
+    transparent
+  ) !important;
+}
+
+/* 콘텐츠 페이지 이동 영역 */
+
+html[data-moru-theme] .mod-list + nav.button-row {
+  background: var(--moru-panel) !important;
+  border-color: var(--moru-border) !important;
+}
+
+/* 상단 창 제어 버튼 */
+
+html[data-moru-theme]
+.moru-desktop-titlebar
+.moru-caption-button {
+  color: var(--moru-muted);
+}
+
+html[data-moru-theme]
+.moru-desktop-titlebar
+.moru-caption-button:not(.moru-caption-close):hover {
+  background: var(--moru-hover);
+  color: var(--moru-accent);
+}
+
+html[data-moru-theme]
+.moru-desktop-titlebar
+.moru-caption-button:focus-visible {
+  outline-color: var(--moru-accent);
+}
+
+/* 설정창 스크롤바 */
+
+html[data-moru-theme] :is(
+  .settings-dialog,
+  .moru-create-dialog,
+  .moru-select-menu
+),
+html[data-moru-theme] .settings-dialog * {
+  scrollbar-color:
+    var(--moru-border)
+    var(--moru-panel);
+}
+
+html[data-moru-theme]
+.settings-dialog::-webkit-scrollbar-track,
+html[data-moru-theme]
+.settings-dialog *::-webkit-scrollbar-track,
+html[data-moru-theme]
+.settings-dialog::-webkit-scrollbar-corner,
+html[data-moru-theme]
+.settings-dialog *::-webkit-scrollbar-corner {
+  background: var(--moru-panel);
+}
+
+html[data-moru-theme]
+.settings-dialog::-webkit-scrollbar-thumb,
+html[data-moru-theme]
+.settings-dialog *::-webkit-scrollbar-thumb {
+  background: var(--moru-border);
+  border-color: var(--moru-panel);
+}
+
+html[data-moru-theme]
+.settings-dialog::-webkit-scrollbar-thumb:hover,
+html[data-moru-theme]
+.settings-dialog *::-webkit-scrollbar-thumb:hover {
+  background: var(--moru-accent);
+}
+
+/* 삭제·오류 경고는 빨간색 유지 */
+
+html[data-moru-theme]
+.moru-client-settings
+.client-danger {
+  background: #29191a !important;
+  border-color: #874344 !important;
+}
+
+html[data-moru-theme]
+.client-danger
+.client-warning {
+  color: #ff9a9f !important;
+}
+
+html[data-moru-theme] .error {
+  color: #ffaaaa !important;
+}
+
+/* 홈 화면 */
+
+html[data-moru-theme] .hero {
+  background: linear-gradient(
+    120deg,
+    var(--moru-panel),
+    var(--moru-bg)
+  ) !important;
+
+  border-color: var(--moru-border) !important;
+  color: var(--moru-text) !important;
+}
+
+/* 안내 메시지 */
+
+html[data-moru-theme] .notice {
+  background: var(--moru-selected) !important;
+  color: var(--moru-text) !important;
+  border-color: var(--moru-border) !important;
+}
+
+html[data-moru-theme] :is(
+  .create-loader-grid label,
+  .moru-about .legal-body,
+  .home-profile-picker label
+) {
+  color: var(--moru-muted) !important;
+}

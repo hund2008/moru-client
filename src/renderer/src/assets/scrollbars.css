@@ -1,0 +1,51 @@
+/* 콘텐츠 화면: 스크롤 기능을 유지하면서 바 숨기기 */
+.moru-shell > .content {
+  scrollbar-width: none;
+}
+
+.moru-shell > .content::-webkit-scrollbar {
+  display: none;
+}
+
+/* 설정창: MORU 색상에 맞춘 얇은 스크롤바 */
+.settings-dialog,
+.settings-dialog * {
+  scrollbar-width: thin;
+  scrollbar-color: #416653 #131e19;
+}
+
+.settings-dialog::-webkit-scrollbar,
+.settings-dialog *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.settings-dialog::-webkit-scrollbar-track,
+.settings-dialog *::-webkit-scrollbar-track {
+  background: #131e19;
+}
+
+.settings-dialog::-webkit-scrollbar-thumb,
+.settings-dialog *::-webkit-scrollbar-thumb {
+  background: #416653;
+  border: 2px solid #131e19;
+  border-radius: 8px;
+}
+
+.settings-dialog::-webkit-scrollbar-thumb:hover,
+.settings-dialog *::-webkit-scrollbar-thumb:hover {
+  background: #67a081;
+}
+
+/* 위아래 화살표 버튼 제거 */
+.settings-dialog::-webkit-scrollbar-button,
+.settings-dialog *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.settings-dialog::-webkit-scrollbar-corner,
+.settings-dialog *::-webkit-scrollbar-corner {
+  background: #131e19;
+}
